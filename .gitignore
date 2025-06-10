@@ -1,0 +1,5 @@
+data/USenhanced23/
+checkpoints/
+wandb/
+*.AppImage
+__pycache__/
