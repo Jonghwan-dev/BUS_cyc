@@ -49,12 +49,14 @@ def compute_ssim(real: np.ndarray, fake: np.ndarray) -> float:
     return float(structural_similarity(real, fake, channel_axis=2, data_range=1.0))
 
 
+@torch.no_grad()
 def compute_lpips(real: torch.Tensor, fake: torch.Tensor, lpips_fn: LearnedPerceptualImagePatchSimilarity) -> float:
     """Return LPIPS distance using the given LPIPS module."""
 
     return float(lpips_fn(fake.unsqueeze(0), real.unsqueeze(0)))
 
 
+@torch.no_grad()
 def compute_fid(real_paths: List[str], fake_paths: List[str], device: torch.device) -> float:
     """Compute FID over two image sets."""
 
@@ -66,6 +68,7 @@ def compute_fid(real_paths: List[str], fake_paths: List[str], device: torch.devi
     return float(fid.compute())
 
 
+@torch.no_grad()
 def compute_kid(real_paths: List[str], fake_paths: List[str], device: torch.device) -> float:
     """Compute KID over two image sets."""
 
@@ -79,6 +82,7 @@ def compute_kid(real_paths: List[str], fake_paths: List[str], device: torch.devi
     return float(kid.compute()[0])
 
 
+@torch.no_grad()
 def evaluate_pairwise(real_paths: List[str], fake_paths: List[str], device: torch.device) -> Dict[str, float]:
     """Evaluate standard metrics for two image lists."""
 
