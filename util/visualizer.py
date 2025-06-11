@@ -237,6 +237,40 @@ class Visualizer():
         if self.use_wandb:
             self.wandb_run.log(losses)
 
+    def plot_current_metrics(self, epoch, metrics):
+        """Display validation metrics on visdom and log them."""
+        if not hasattr(self, 'plot_metric_data'):
+            self.plot_metric_data = {
+                'X': [],
+                'Y': [],
+                'legend': list(metrics.keys())
+            }
+        self.plot_metric_data['X'].append(epoch)
+        self.plot_metric_data['Y'].append([
+            metrics[k] for k in self.plot_metric_data['legend']
+        ])
+        try:
+            self.vis.line(
+                X=np.stack([
+                    np.array(self.plot_metric_data['X'])
+                ] * len(self.plot_metric_data['legend']), 1),
+                Y=np.array(self.plot_metric_data['Y']),
+                opts={
+                    'title': self.name + ' val metrics',
+                    'legend': self.plot_metric_data['legend'],
+                    'xlabel': 'epoch',
+                    'ylabel': 'value'
+                },
+                win=self.display_id + 100
+            )
+        except VisdomExceptionBase:
+            self.create_visdom_connections()
+        if self.use_wandb:
+            log_dict = {'epoch': epoch}
+            for k, v in metrics.items():
+                log_dict[f'val_{k}'] = v
+            self.wandb_run.log(log_dict)
+
     # losses: same format as |losses| of plot_current_losses
     def print_current_losses(self, epoch, iters, losses, t_comp, t_data):
         """print current losses on console; also save the losses to the disk
@@ -255,3 +289,12 @@ class Visualizer():
         print(message)  # print the message
         with open(self.log_name, "a") as log_file:
             log_file.write('%s\n' % message)  # save the message
+
+    def print_current_metrics(self, epoch, metrics):
+        """Print validation metrics and save to disk."""
+        message = f'(epoch: {epoch}, validation) '
+        for k, v in metrics.items():
+            message += f'{k}: {v:.3f} '
+        print(message)
+        with open(self.log_name, "a") as log_file:
+            log_file.write(f'{message}\n')
