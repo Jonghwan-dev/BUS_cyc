@@ -1,0 +1,18 @@
+program: train_sweep.py
+method: random
+metric:
+  name: val_psnr
+  goal: maximize
+parameters:
+  netG:
+    values: ["resnet_9blocks", "resnet_6blocks", "unet_256", "unet_128"]
+  n_layers_D:
+    values: [3, 4, 5]
+  norm:
+    values: ["instance", "batch"]
+  batch_size:
+    values: [1, 2, 4]
+  gan_mode:
+    values: ["vanilla", "lsgan", "wgangp"]
+  lr:
+    values: [0.0002, 0.0005, 0.0008, 0.001]
