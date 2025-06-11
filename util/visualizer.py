@@ -237,7 +237,6 @@ class Visualizer():
         if self.use_wandb:
             self.wandb_run.log(losses)
 
-    # losses: same format as |losses| of plot_current_losses
     def print_current_losses(self, epoch, iters, losses, t_comp, t_data):
         """print current losses on console; also save the losses to the disk
 
@@ -255,3 +254,47 @@ class Visualizer():
         print(message)  # print the message
         with open(self.log_name, "a") as log_file:
             log_file.write('%s\n' % message)  # save the message
+
+    def print_current_metrics(self, epoch, metrics):
+        """print current metrics on console; also save the metrics to the disk
+
+        Parameters:
+            epoch (int) -- current epoch
+            metrics (dict) -- evaluation metrics stored in the format of (name, float) pairs
+        """
+        message = '(epoch: %d) ' % (epoch)
+        for k, v in metrics.items():
+            message += '%s: %.3f ' % (k, v)
+
+        print(message)  # print the message
+        with open(self.log_name, "a") as log_file:
+            log_file.write('%s\n' % message)  # save the message
+
+        if self.use_wandb:
+            self.wandb_run.log(metrics)
+
+    def plot_current_metrics(self, epoch, metrics):
+        """display the current metrics on visdom display: dictionary of metric labels and values
+
+        Parameters:
+            epoch (int)           -- current epoch
+            metrics (OrderedDict) -- evaluation metrics stored in the format of (name, float) pairs
+        """
+        if not hasattr(self, 'plot_metrics_data'):
+            self.plot_metrics_data = {'X': [], 'Y': [], 'legend': list(metrics.keys())}
+        self.plot_metrics_data['X'].append(epoch)
+        self.plot_metrics_data['Y'].append([metrics[k] for k in self.plot_metrics_data['legend']])
+        try:
+            self.vis.line(
+                X=np.stack([np.array(self.plot_metrics_data['X'])] * len(self.plot_metrics_data['legend']), 1),
+                Y=np.array(self.plot_metrics_data['Y']),
+                opts={
+                    'title': self.name + ' metrics over time',
+                    'legend': self.plot_metrics_data['legend'],
+                    'xlabel': 'epoch',
+                    'ylabel': 'metric value'},
+                win=self.display_id + 100)  # Use a different window ID for metrics
+        except VisdomExceptionBase:
+            self.create_visdom_connections()
+        if self.use_wandb:
+            self.wandb_run.log(metrics)

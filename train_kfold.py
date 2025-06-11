@@ -56,6 +56,30 @@ def train_one_fold(opt, fold):
                 model.save_networks(save_suffix)
 
             iter_data_time = time.time()
+        # run validation
+        val_opt = copy.deepcopy(opt)
+        val_opt.phase = 'val'
+        val_dataset = create_dataset(val_opt)
+        real_paths = []
+        fake_paths = []
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        for vdata in val_dataset:
+            model.set_input(vdata)
+            model.test()
+            fake = model.get_current_visuals()['fake_B']
+            b_path = vdata['B_paths']
+            if isinstance(b_path, list):
+                b_path = b_path[0]  # Take the first path if it's a list
+            img_name = os.path.basename(b_path)
+            save_path = os.path.join(opt.checkpoints_dir, opt.name, f'fold{fold}_val_fake_{img_name}')
+            util.save_image(util.tensor2im(fake), save_path)
+            fake_paths.append(save_path)
+            real_paths.append(b_path)
+        metrics = evaluate_pairwise(real_paths, fake_paths, device)
+        visualizer.print_current_metrics(epoch, metrics)
+        if opt.display_id > 0:
+            visualizer.plot_current_metrics(epoch, metrics)
+
         if epoch % opt.save_epoch_freq == 0:
             print(f'saving the model at the end of epoch {epoch}, iters {total_iters}')
             model.save_networks('latest')
@@ -66,17 +90,21 @@ def train_one_fold(opt, fold):
     test_opt = copy.deepcopy(opt)
     test_opt.phase = 'test'
     test_dataset = create_dataset(test_opt)
-    real_paths = [d['B_paths'] for d in test_dataset.dataset]
+    real_paths = []
     fake_paths = []
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     for data in test_dataset:
         model.set_input(data)
         model.test()
         fake = model.get_current_visuals()['fake_B']
-        img_name = os.path.basename(data['B_paths'])
+        b_path = data['B_paths']
+        if isinstance(b_path, list):
+            b_path = b_path[0]  # Take the first path if it's a list
+        img_name = os.path.basename(b_path)
         save_path = os.path.join(opt.checkpoints_dir, opt.name, f'fold{fold}_fake_{img_name}')
         util.save_image(util.tensor2im(fake), save_path)
         fake_paths.append(save_path)
+        real_paths.append(b_path)
     metrics = evaluate_pairwise(real_paths, fake_paths, device)
     return metrics
 
@@ -97,4 +125,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
