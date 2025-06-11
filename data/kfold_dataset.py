@@ -9,7 +9,10 @@ from sklearn.model_selection import KFold
 class KFoldDataset(BaseDataset):
     @staticmethod
     def modify_commandline_options(parser, is_train):
-        """Add dataset-specific options"""
+        """Add dataset-specific options for K-Fold cross validation."""
+        parser.add_argument('--k_folds', type=int, default=5, help='K-Fold 분할 수')
+        parser.add_argument('--current_fold', type=int, default=0, help='현재 fold 번호')
+        parser.add_argument('--val_ratio', type=float, default=0.2, help='train 데이터 중 검증 데이터 비율')
         return parser
 
     def __init__(self, opt):

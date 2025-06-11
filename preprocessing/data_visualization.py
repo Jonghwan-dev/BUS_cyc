@@ -13,7 +13,7 @@ from data.unaligned_dataset import UnalignedDataset
 class Args:
     def __init__(self):
         # 절대 경로 사용
-        self.dataroot = os.path.abspath('./data/USenhaned23')
+        self.dataroot = os.path.abspath('./data/USenhanced23')
         print(f"데이터셋 경로: {self.dataroot}")
         
         # 경로 존재 확인
