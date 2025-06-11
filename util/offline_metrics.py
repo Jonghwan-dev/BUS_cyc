@@ -14,12 +14,19 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.image.kid import KernelInceptionDistance
 
-def _load_image(path: str, device: torch.device) -> torch.Tensor:
-    """Load an image and convert it to a normalised tensor."""
-
+def _load_image(path: str, device: torch.device, normalize: bool = True) -> torch.Tensor:
+    """Load an image and convert it to a tensor.
+    
+    Args:
+        path: Path to the image
+        device: Device to load the tensor to
+        normalize: If True, normalize to [0, 1] range. If False, keep as uint8.
+    """
     img = Image.open(path).convert("RGB")
     arr = np.array(img)
-    tensor = torch.from_numpy(arr).permute(2, 0, 1).float() / 255.0
+    tensor = torch.from_numpy(arr).permute(2, 0, 1)
+    if normalize:
+        tensor = tensor.float() / 255.0
     return tensor.to(device)
 
 
@@ -65,11 +72,13 @@ def compute_fid(real_paths: List[str], fake_paths: List[str], device: torch.devi
 def compute_kid(real_paths: List[str], fake_paths: List[str], device: torch.device) -> float:
     """Compute KID over two image sets."""
 
-    kid = KernelInceptionDistance(subset_size=50).to(device)
+    # Calculate subset_size as min(50, len(real_paths))
+    subset_size = min(50, len(real_paths))
+    kid = KernelInceptionDistance(subset_size=subset_size).to(device)
     for path in real_paths:
-        kid.update(_load_image(path, device).unsqueeze(0), real=True)
+        kid.update(_load_image(path, device, normalize=False).unsqueeze(0), real=True)
     for path in fake_paths:
-        kid.update(_load_image(path, device).unsqueeze(0), real=False)
+        kid.update(_load_image(path, device, normalize=False).unsqueeze(0), real=False)
     return float(kid.compute()[0])
 
 

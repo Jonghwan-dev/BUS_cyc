@@ -38,6 +38,6 @@ class TrainOptions(BaseOptions):
         # k-fold cross validation parameters
         parser.add_argument('--k_folds', type=int, default=5, help='number of folds for k-fold cross validation')
         parser.add_argument('--val_ratio', type=float, default=0.2, help='ratio of validation set size to training set size')
-        
+
         self.isTrain = True
         return parser
