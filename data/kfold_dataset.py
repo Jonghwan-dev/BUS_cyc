@@ -9,10 +9,16 @@ from sklearn.model_selection import KFold
 class KFoldDataset(BaseDataset):
     @staticmethod
     def modify_commandline_options(parser, is_train):
-        """Add dataset-specific options for K-Fold cross validation."""
-        parser.add_argument('--k_folds', type=int, default=5, help='K-Fold 분할 수')
-        parser.add_argument('--current_fold', type=int, default=0, help='현재 fold 번호')
-        parser.add_argument('--val_ratio', type=float, default=0.2, help='train 데이터 중 검증 데이터 비율')
+        """Add new dataset-specific options, and rewrite default values for existing options.
+
+        Parameters:
+            parser          -- original option parser
+            is_train (bool) -- whether training phase or test phase. You can use this flag to add training-specific or test-specific options.
+
+        Returns:
+            the modified parser.
+        """
+        # 모든 인자가 이미 train_options.py에 정의되어 있으므로 추가 인자 없음
         return parser
 
     def __init__(self, opt):
