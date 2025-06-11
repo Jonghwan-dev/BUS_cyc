@@ -1,3 +1,21 @@
+command:
+  - ${env}
+  - python
+  - train_sweep.py
+  - --dataroot
+  - ./data/USenhanced23
+  - --name
+  - sweep_run
+  - --model
+  - cycle_gan
+  - --input_nc
+  - 1
+  - --output_nc
+  - 1
+  - --use_wandb
+  - --wandb_project_name
+  - CycleGAN-sweep
+=======
 program: train_sweep.py
 method: random
 metric:
