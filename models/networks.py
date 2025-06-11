@@ -189,7 +189,7 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
         [pixel]: 1x1 PixelGAN discriminator can classify whether a pixel is real or not.
         It encourages greater color diversity but has no effect on spatial statistics.
 
-    The discriminator has been initialized by <init_net>. It uses Leakly RELU for non-linearity.
+    The discriminator has been initialized by <init_net>. It uses Leaky ReLU.
     """
     net = None
     norm_layer = get_norm_layer(norm_type=norm)
