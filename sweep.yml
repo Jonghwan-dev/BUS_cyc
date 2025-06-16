@@ -5,7 +5,7 @@ command:
   - --dataroot
   - ./data/USenhanced23
   - --name
-  - sweep_run
+  - sweep_runV
   - --model
   - cycle_gan
   - --input_nc
@@ -16,20 +16,28 @@ command:
   - --wandb_project_name
   - CycleGAN-sweep
 
-method: random
+method: grid
 metric:
-  name: val_psnr
+  name: best_psnr
   goal: maximize
 parameters:
   netG:
-    values: ["resnet_9blocks", "resnet_6blocks", "unet_256", "unet_128"]
+    values: ["resnet_9blocks"]
   n_layers_D:
-    values: [3, 4, 5]
+    values: [5]
   norm:
-    values: ["instance", "batch"]
+    values: ["batch"]
   batch_size:
-    values: [1, 2, 4]
+    values: [4]
   gan_mode:
-    values: ["vanilla", "lsgan", "wgangp"]
+    values: ["lsgan"]
   lr:
-    values: [0.0002, 0.0005, 0.0008, 0.001]
+    values: [0.0002]
+  beta1:
+    values: [0.6]
+  lambda_A:
+    values: [5.0, 7.0, 10.0]
+  lambda_B:
+    values: [5.0, 7.0, 10.0]
+  lambda_identity:
+    values: [0.3, 0.5, 0.7]

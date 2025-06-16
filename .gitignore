@@ -3,3 +3,4 @@ checkpoints/
 wandb/
 *.AppImage
 __pycache__/
+results/

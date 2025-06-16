@@ -110,4 +110,3 @@ def evaluate_pairwise(real_paths: List[str], fake_paths: List[str], device: torc
         "FID": fid_score,
         "KID": kid_score,
     }
-

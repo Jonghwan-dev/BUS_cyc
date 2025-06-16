@@ -154,10 +154,38 @@ class BaseModel(ABC):
                 net = getattr(self, 'net' + name)
 
                 if len(self.gpu_ids) > 0 and torch.cuda.is_available():
-                    torch.save(net.module.cpu().state_dict(), save_path)
+                    # 하이퍼파라미터 정보를 state_dict에 추가
+                    state_dict = net.module.cpu().state_dict()
+                    state_dict['hyperparameters'] = {
+                        'netG': self.opt.netG,
+                        'n_layers_D': self.opt.n_layers_D,
+                        'norm': self.opt.norm,
+                        'batch_size': self.opt.batch_size,
+                        'gan_mode': self.opt.gan_mode,
+                        'lr': self.opt.lr,
+                        'beta1': self.opt.beta1,
+                        'lambda_A': self.opt.lambda_A,
+                        'lambda_B': self.opt.lambda_B,
+                        'lambda_identity': self.opt.lambda_identity
+                    }
+                    torch.save(state_dict, save_path)
                     net.cuda(self.gpu_ids[0])
                 else:
-                    torch.save(net.cpu().state_dict(), save_path)
+                    # 하이퍼파라미터 정보를 state_dict에 추가
+                    state_dict = net.cpu().state_dict()
+                    state_dict['hyperparameters'] = {
+                        'netG': self.opt.netG,
+                        'n_layers_D': self.opt.n_layers_D,
+                        'norm': self.opt.norm,
+                        'batch_size': self.opt.batch_size,
+                        'gan_mode': self.opt.gan_mode,
+                        'lr': self.opt.lr,
+                        'beta1': self.opt.beta1,
+                        'lambda_A': self.opt.lambda_A,
+                        'lambda_B': self.opt.lambda_B,
+                        'lambda_identity': self.opt.lambda_identity
+                    }
+                    torch.save(state_dict, save_path)
 
     def __patch_instance_norm_state_dict(self, state_dict, module, keys, i=0):
         """Fix InstanceNorm checkpoints incompatibility (prior to 0.4)"""
