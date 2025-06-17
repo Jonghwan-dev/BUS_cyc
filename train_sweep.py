@@ -137,13 +137,18 @@ def train():
             **metrics,
             **model.get_current_losses()
         })
-        
+        from pathlib import Path
+        import hashlib
         # best model 저장 및 wandb sweep metric 업데이트
         if metrics['PSNR'] > best_val_psnr:
             best_val_psnr = metrics['PSNR']
             best_epoch = epoch
             # best 모델 저장 시 하이퍼파라미터 정보 포함
-            model.save_networks(f'best_{checkpoint_name}')
+            tag      = hashlib.md5(checkpoint_name.encode()).hexdigest()[:8]
+            save_dir = Path(opt.checkpoints_dir) / opt.name / f"best_{tag}"
+            save_dir.mkdir(parents=True, exist_ok=True)
+            model.save_networks(save_dir.as_posix())      # net_G_A/B.pth
+            (save_dir/'meta.txt').write_text(checkpoint_name + '\n')
             # wandb sweep metric 업데이트
             wandb.run.summary["best_psnr"] = best_val_psnr
             wandb.run.summary["best_epoch"] = best_epoch
