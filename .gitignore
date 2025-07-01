@@ -4,3 +4,7 @@ wandb/
 *.AppImage
 __pycache__/
 results/
+
+UNet/data/datasets.csv
+UNet/datasets
+UNet/notebook
