@@ -1,161 +1,191 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import kornia
-from torch.utils.data import DataLoader
-from UNet.models.model import UNet
-from UNet.data.dataset import SegDataset
-import wandb
 import numpy as np
+import pandas as pd
+import wandb
+import os
+import cv2
+from tqdm import tqdm
+from utils import metrics
+from pathlib import Path
 
-def dice_score(pred, target, eps=1e-7):
-    pred = (pred > 0.5).float()
-    target = (target > 0.5).float()
-    intersection = (pred * target).sum(dim=(1,2,3))
-    union = pred.sum(dim=(1,2,3)) + target.sum(dim=(1,2,3))
-    dice = (2 * intersection + eps) / (union + eps)
-    return dice.mean().item()
+class Trainer:
+    """
+    k-fold 교차 검증의 단일 fold에 대한 훈련 및 검증을 총괄하는 클래스.
+    - [복원] WandB 로깅 이미지 리사이즈로 로딩 속도 최적화
+    - [복원] 전체 히스토리 기반의 동적 랭킹으로 최고 모델 저장
+    """
+    def __init__(self, model, criterion, optimizer, scheduler, device, config, train_loader, val_loader):
+        self.model = model
+        self.criterion = criterion
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.device = device
+        self.config = config
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        
+        self.epochs = config['trainer']['epochs']
+        self.save_dir = config['trainer']['save_dir']
+        self.patience = config['trainer']['early_stop']
+        self.val_fold = config['data_loader']['val_fold']
+        
+        os.makedirs(self.save_dir, exist_ok=True)
+        self.wandb_project = config['visualization'].get('wandb_project')
 
-def pixel_accuracy(pred, target):
-    pred = (pred > 0.5).float()
-    target = (target > 0.5).float()
-    correct = (pred == target).float().sum()
-    total = torch.numel(pred)
-    return (correct / total).item()
+        # 랭크 기반 저장을 위한 상태 변수
+        self.metric_history = []
+        self.best_epoch = 0
 
-def iou_score(pred, target, eps=1e-7):
-    pred = (pred > 0.5).float()
-    target = (target > 0.5).float()
-    intersection = (pred * target).sum(dim=(1,2,3))
-    union = ((pred + target) > 0).float().sum(dim=(1,2,3))
-    iou = (intersection + eps) / (union + eps)
-    return iou.mean().item()
+        # WandB 시각화용 고정 이미지 저장 변수
+        self.fixed_wandb_images = {}
+        self.wandb_images_selected = False
 
+    def train(self):
+        if self.wandb_project:
+            csv_path = self.config['data_loader']['csv_path']
+            dataset_name = Path(csv_path).stem
+            run_name = f"{self.config['arch']}_{dataset_name}_fold{self.val_fold}"
+            wandb.init(project=self.wandb_project, config=self.config, name=run_name, reinit=True)
+        
+        epochs_no_improve = 0
+        
+        for epoch in range(self.epochs):
+            train_loss = self._train_epoch(epoch)
+            val_loss, val_metrics = self._validate_epoch()
+            
+            # --- [핵심 수정 1] 랭킹 알고리즘 및 저장 로직 복원 ---
+            rank_info = self._update_and_get_best_rank(val_loss, val_metrics, epoch)
+            
+            # 현재 에폭이 전체 히스토리 중 최고 랭크일 경우 모델 저장
+            if rank_info['best_epoch'] == epoch + 1:
+                self.best_epoch = epoch + 1
+                epochs_no_improve = 0
+                
+                print(f"    -> New best model found!")
+                print(f"       - Current Best Epoch: {self.best_epoch}, Combined Rank: {rank_info['best_score']:.2f}")
+                
+                model_name = f"{self.config['arch']}_{Path(self.config['data_loader']['csv_path']).stem}_best_fold_{self.val_fold}.pth"
+                torch.save(self.model.state_dict(), os.path.join(self.save_dir, model_name))
+                print(f"       - Model saved to {model_name}")
+            else:
+                epochs_no_improve += 1
+            
+            print(f'[Fold {self.val_fold} | Epoch {epoch+1:03d}] Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Dice: {val_metrics["dice"]:.4f} | Val HD95: {val_metrics["hd95"]:.4f}')
 
-class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.8, gamma=2):
-        super().__init__()
-        self.alpha = alpha
-        self.gamma = gamma
+            if self.wandb_project:
+                log_data = {'train/loss': train_loss, 'val/loss': val_loss, **{f'val/{k}': v for k, v in val_metrics.items()},
+                            'best_epoch_rank_score': rank_info['best_score']}
+                if (epoch + 1) % 5 == 0:
+                    self._log_fixed_images_prediction(epoch, log_data)
+                else:
+                    wandb.log(log_data, step=epoch)
 
-    def forward(self, inputs, targets):
-        inputs = torch.sigmoid(inputs)
-        BCE = F.binary_cross_entropy(inputs, targets, reduction='none')
-        pt = torch.exp(-BCE)
-        F_loss = self.alpha * (1-pt)**self.gamma * BCE
-        return F_loss.mean()
+            self.scheduler.step(val_metrics['dice'])
 
-class EdgeLoss(nn.Module):
-    """Edge-aware loss using Sobel filter"""
-    def __init__(self):
-        super().__init__()
-        self.sobel = kornia.filters.Sobel()
+            if epochs_no_improve >= self.patience:
+                print(f"Early stopping triggered after {self.patience} epochs with no improvement. Best epoch was {self.best_epoch}.")
+                break
+        
+        if self.wandb_project: wandb.finish()
 
-    def forward(self, inputs, targets):
-        inputs = torch.sigmoid(inputs)
-        pred_edge = self.sobel(inputs)
-        target_edge = self.sobel(targets)
-        return F.l1_loss(pred_edge, target_edge)
-
-class Custom_Loss(nn.Module):
-    def __init__(self, alpha=0.8, gamma=2, edge_weight=1.0):
-        super().__init__()
-        self.focal = FocalLoss(alpha, gamma)
-        self.edge = EdgeLoss()
-        self.edge_weight = edge_weight
-
-    def forward(self, inputs, targets):
-        return self.focal(inputs, targets) + self.edge_weight * self.edge(inputs, targets)
-
-def train_unet(
-    processed,
-    val_ratio=0.2,
-    batch_size=64,
-    epochs=100,
-    lr=1e-4,
-    device='cuda' if torch.cuda.is_available() else 'cpu',
-    project_name='BUS_UNet',
-):
-    wandb.init(project=project_name, name="unet_train_custom_loss", config={
-        "epochs": epochs,
-        "batch_size": batch_size,
-        "lr": lr,
-        "val_ratio": val_ratio,
-    })
-
-    n = len(processed)
-    idxs = torch.randperm(n)
-    split = int(n * (1 - val_ratio))
-    train_idx, val_idx = idxs[:split], idxs[split:]
-    train_set = SegDataset([processed[i] for i in train_idx])
-    val_set = SegDataset([processed[i] for i in val_idx])
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False)
-
-    model = UNet(in_channels=1, out_channels=1).to(device)
-    criterion = Custom_Loss(alpha=0.8, gamma=2, edge_weight=1.0)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-    for epoch in range(epochs):
-        model.train()
-        train_loss = 0
-        for imgs, masks in train_loader:
-            imgs, masks = imgs.to(device), masks.to(device)
-            optimizer.zero_grad()
-            outputs = model(imgs)
-            loss = criterion(outputs, masks)
+    def _train_epoch(self, epoch):
+        self.model.train()
+        total_loss = 0
+        progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1} Train", leave=False)
+        for batch in progress_bar:
+            images, masks = batch['image'].to(self.device), batch['mask'].to(self.device)
+            self.optimizer.zero_grad()
+            outputs = self.model(images)
+            loss = self.criterion(outputs, masks)
             loss.backward()
-            optimizer.step()
-            train_loss += loss.item() * imgs.size(0)
-        train_loss /= len(train_loader.dataset)
-        wandb.log({"train/loss": train_loss}, step=epoch)
+            self.optimizer.step()
+            total_loss += loss.item()
+            progress_bar.set_postfix(loss=loss.item())
+        return total_loss / len(self.train_loader)
 
-        # Validation
-        model.eval()
-        val_loss = 0
-        dices, accs, ious = [], [], []
+    def _validate_epoch(self):
+        self.model.eval()
+        total_loss = 0
+        batch_metrics = {'dice': [], 'iou': [], 'hd95': []}
         with torch.no_grad():
-            for imgs, masks in val_loader:
-                imgs, masks = imgs.to(device), masks.to(device)
-                outputs = model(imgs)
-                loss = criterion(outputs, masks)
-                val_loss += loss.item() * imgs.size(0)
-                probs = torch.sigmoid(outputs)
-                dices.append(dice_score(probs, masks))
-                accs.append(pixel_accuracy(probs, masks))
-                ious.append(iou_score(probs, masks))
-        val_loss /= len(val_loader.dataset)
-        mean_dice = np.mean(dices)
-        mean_acc = np.mean(accs)
-        mean_iou = np.mean(ious)
+            for batch in self.val_loader:
+                if not self.wandb_images_selected: self._select_fixed_images(batch)
+                images, masks = batch['image'].to(self.device), batch['mask'].to(self.device)
+                outputs = self.model(images)
+                loss = self.criterion(outputs, masks)
+                total_loss += loss.item()
+                probs, targets = torch.sigmoid(outputs).cpu(), masks.cpu()
+                batch_metrics['dice'].append(metrics.dice_score(probs, targets))
+                batch_metrics['iou'].append(metrics.iou_score(probs, targets))
+                hd95_val = metrics.hd95_batch(probs, targets)
+                if not np.isnan(hd95_val): batch_metrics['hd95'].append(hd95_val)
+        
+        avg_metrics = {k: np.mean(v) if v else 0 for k, v in batch_metrics.items()}
+        if not batch_metrics['hd95']: avg_metrics['hd95'] = 999
+        return total_loss / len(self.val_loader), avg_metrics
 
-        wandb.log({
-            "val/loss": val_loss,
-            "val/dice": mean_dice,
-            "val/pixel_acc": mean_acc,
-            "val/mIoU@0.5": mean_iou,
-        }, step=epoch)
+    def _update_and_get_best_rank(self, val_loss, current_metrics, epoch):
+        """전체 히스토리를 다시 계산하여 현재 시점의 최고 에폭 정보를 반환"""
+        metrics_to_rank = {'epoch': epoch + 1, 'loss': val_loss, **current_metrics}
+        self.metric_history.append(metrics_to_rank)
+        
+        history_df = pd.DataFrame(self.metric_history)
+        
+        history_df['loss_rank'] = history_df['loss'].rank(ascending=True, method='dense')
+        history_df['dice_rank'] = history_df['dice'].rank(ascending=False, method='dense')
+        history_df['hd95_rank'] = history_df['hd95'].rank(ascending=True, method='dense')
+        
+        history_df['score'] = (history_df['loss_rank'] + history_df['dice_rank'] + history_df['hd95_rank']) / 3
+        
+        best_epoch_idx = history_df['score'].idxmin()
+        best_epoch_info = history_df.loc[best_epoch_idx]
+        
+        return {"best_epoch": int(best_epoch_info['epoch']), "best_score": best_epoch_info['score']}
 
-        print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Dice: {mean_dice:.4f} | Acc: {mean_acc:.4f} | IoU: {mean_iou:.4f}")
+    def _select_fixed_images(self, batch):
+        if self.wandb_images_selected: return
+        class_labels, self.fixed_wandb_images = {0: "benign", 1: "malignant", 2: "normal"}, {}
+        images, masks, labels = batch['image'], batch['mask'], batch['label']
+        for i in range(images.size(0)):
+            label = labels[i].item()
+            if label in class_labels and label not in self.fixed_wandb_images:
+                self.fixed_wandb_images[label] = {'image': images[i].cpu(), 'mask': masks[i].cpu(), 'label_name': class_labels[label]}
+        if len(self.fixed_wandb_images) >= len(class_labels):
+            self.wandb_images_selected = True
+            print(f"Selected {len([v for v in self.fixed_wandb_images.values() if v])} images for logging.")
 
-        # 예시 이미지 wandb에 기록 (epoch마다 1개)
-        if epoch % 5 == 0 or epoch == epochs-1:
-            imgs, masks = next(iter(val_loader))
-            imgs, masks = imgs.to(device), masks.to(device)
+    def _log_fixed_images_prediction(self, current_epoch, log_data):
+        self.model.eval()
+        image_log_dict = {}
+        log_img_size = (128, 128) # 로깅용 이미지 크기
+
+        for data in self.fixed_wandb_images.values():
+            if data is None: continue
+            
+            image_tensor = data['image'].unsqueeze(0).to(self.device)
             with torch.no_grad():
-                outputs = model(imgs)
-                probs = torch.sigmoid(outputs)
-            img_np = imgs[0,0].cpu().numpy()
-            mask_np = masks[0,0].cpu().numpy()
-            pred_np = (probs[0,0].cpu().numpy() > 0.5).astype(np.uint8)
-            wandb.log({
-                "val/example": [
-                    wandb.Image(img_np, caption="Input"),
-                    wandb.Image(mask_np, caption="GT"),
-                    wandb.Image(pred_np, caption="Pred"),
-                ]
-            }, step=epoch)
+                pred_tensor = torch.sigmoid(self.model(image_tensor)).cpu()
 
-    torch.save(model.state_dict(), "unet_best.pth")
-    print("모델 저장 완료: unet_best.pth")
-    wandb.finish()
+            # --- [핵심 수정 2] 로깅용 리사이즈 로직 복원 ---
+            img_np = data['image'].squeeze().numpy()
+            gt_mask_np = data['mask'].squeeze().numpy()
+            pred_mask_np = (pred_tensor.squeeze().numpy() > 0.5).astype(np.uint8)
+
+            img_log = cv2.resize(img_np, log_img_size, interpolation=cv2.INTER_LINEAR)
+            gt_log = cv2.resize(gt_mask_np, log_img_size, interpolation=cv2.INTER_NEAREST)
+            pred_log = cv2.resize(pred_mask_np, log_img_size, interpolation=cv2.INTER_NEAREST)
+            
+            # 3채널로 변환
+            img_log_rgb = np.stack([img_log]*3, axis=-1)
+            gt_log_rgb = np.stack([gt_log*255]*3, axis=-1)
+            pred_log_rgb = np.stack([pred_log*255]*3, axis=-1)
+            
+            label_name = data['label_name']
+            image_log_dict[f"Images/{label_name}/Original"] = wandb.Image(img_log_rgb, caption=f"Epoch {current_epoch+1}")
+            image_log_dict[f"Images/{label_name}/Ground_Truth"] = wandb.Image(gt_log_rgb, caption=f"Epoch {current_epoch+1}")
+            image_log_dict[f"Images/{label_name}/Prediction"] = wandb.Image(pred_log_rgb, caption=f"Epoch {current_epoch+1}")
+        
+        if image_log_dict:
+            log_data.update(image_log_dict)
+        
+        wandb.log(log_data, step=current_epoch)

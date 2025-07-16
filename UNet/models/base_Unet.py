@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class DoubleConv(nn.Module):
     """(Conv => BN => ReLU) * 2"""
@@ -15,7 +16,7 @@ class DoubleConv(nn.Module):
         )
     def forward(self, x):
         return self.double_conv(x)
-
+    
 class UNet(nn.Module):
     def __init__(self, in_channels=1, out_channels=1, features=[64, 128, 256, 512, 1024]):
         super().__init__()

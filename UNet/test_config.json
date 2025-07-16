@@ -1,0 +1,21 @@
+{
+  "name": "BUS_Segmentation_Evaluation",
+  "arch": "UNet",
+  "data_loader": {
+    "csv_path": "data/yap2018.csv",
+    "is_upscale": false,
+    "args": {
+      "batch_size": 32,
+      "shuffle": false,
+      "num_workers": 8
+    }
+  },
+  "model": {
+    "in_channels": 1,
+    "out_channels": 1,
+    "features": [64, 128, 256, 512, 1024]
+  },
+  "trainer": {
+    "save_dir": "saved/"
+  }
+}
